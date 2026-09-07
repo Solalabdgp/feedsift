@@ -1,0 +1,242 @@
+# Имя проекта зафиксировано явно, а не выведено из имени папки: при запуске
+# из переименованной/скопированной папки имена сервисов, томов и ключей Redis
+# могли бы схлопнуться в один compose-проект и подцепить чужие тома.
+name: feedsift
+
+# Общее для всех python-сервисов
+x-app: &app
+  build: .
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "50m", max-file: "3" }
+
+# Не-секретные переменные. Их можно отдавать любому контейнеру.
+x-common-env: &common-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-console}
+  TZ: ${TZ:-UTC}
+
+# Доступ к БД и брокеру. DATABASE_URL содержит пароль Postgres — отдаётся только
+# тем сервисам, которые реально ходят в БД (то есть всем python-сервисам, кроме migrate,
+# у которого своя синхронная строка).
+x-db-env: &db-env
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL не задан, см. .env.example}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER не задан}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB не задан}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    # Портов наружу нет намеренно
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+  redis:
+    # Отдельный инстанс: имена ключей плоские, не уникальные в пределах инстанса,
+    # общий Redis с другим пайплайном = гарантированная коллизия.
+    # Секретов не получает вообще — своей аутентификации у него нет,
+    # доступ ограничен внутренней сетью compose.
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+  migrate:
+    <<: *app
+    restart: "no"
+    # Единственный сервис с синхронной строкой подключения. Асинхронный
+    # DATABASE_URL ему не нужен, токены и ключи — тем более.
+    environment:
+      <<: *common-env
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  collector:
+    <<: *app
+    # Учётные данные фида есть только здесь. Ключ LLM и токен бота — не нужны.
+    environment:
+      <<: [*common-env, *db-env]
+      SOURCE_FEED_USER: ${SOURCE_FEED_USER:?SOURCE_FEED_USER не задан}
+      SOURCE_FEED_TOKEN: ${SOURCE_FEED_TOKEN:?SOURCE_FEED_TOKEN не задан}
+      SOURCE_FEED_URL_TEMPLATE: ${SOURCE_FEED_URL_TEMPLATE:?SOURCE_FEED_URL_TEMPLATE не задан}
+      SOURCE_USER_AGENT: ${SOURCE_USER_AGENT:-feedsift/0.1}
+    command: ["python", "-m", "app.collector"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # --- Browse-контур ---
+  # Второй, независимый мониторинг по смежным нишам. Уведомление уходит ТУДА ЖЕ,
+  # что и у main (тот же telegram_owner_id, та же NOTIFY_QUEUE/DIGEST_QUEUE, тот же
+  # _format_card — см. app/notify_router.py), в UX разницы нет. Отличия от main —
+  # только на входе: свои учётные данные фида (свой лимит запросов), свой ключ LLM
+  # (своя квота), заметно более мягкий критерий отбора (SYSTEM_BRIEF_BROWSE/
+  # SCHEMA_HINT_BROWSE + пропуск HF-2/HF-4 в app/worker.py) — поэтому карточек
+  # ожидаемо будет больше при том же формальном пороге. worker и bot — процессы
+  # ОБЩИЕ на оба контура (не дублируются): контур записи определяется через
+  # Source.circuit из Postgres, а не через env процесса. Отдельные контейнеры
+  # нужны только там, где контур завязан на разные учётные данные.
+  collector-browse:
+    <<: *app
+    # Свой аккаунт — НЕ делит лимит запросов с основным collector.
+    # НАМЕРЕННО ":-" (дефолт "", не ":?" обязательный): ":?" валится на этапе
+    # интерполяции переменных ВСЕГО compose-файла, а не только этого сервиса —
+    # то есть отсутствие browse-кредов заблокировало бы деплой ЛЮБЫХ сервисов,
+    # включая main. Вместо этого контейнер стартует, падает на app.config.require()
+    # внутри collector.py с понятной ошибкой в логе и рестартует по
+    # restart:unless-stopped — только ЭТОТ контейнер, остальной стек не затронут.
+    environment:
+      <<: [*common-env, *db-env]
+      SOURCE_FEED_USER: ${SOURCE_FEED_USER_BROWSE:-}
+      SOURCE_FEED_TOKEN: ${SOURCE_FEED_TOKEN_BROWSE:-}
+      SOURCE_FEED_URL_TEMPLATE: ${SOURCE_FEED_URL_TEMPLATE:-}
+      SOURCE_USER_AGENT: ${SOURCE_USER_AGENT:-feedsift/0.1}
+      CIRCUIT: browse
+    command: ["python", "-m", "app.collector"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  llm-worker-browse:
+    <<: *app
+    # Свой ключ LLM (отдельный аккаунт) — расход browse-классификации не режет
+    # квоту основного пайплайна (там она и так впритык, см. app/llm.py).
+    # Слушает отдельную очередь llm_browse — отдельный Celery-процесс, поэтому
+    # rate_limit из celery_app.py (task_annotations на analyze_match) применяется
+    # к нему независимо от llm-worker, без изменений в celery_app.py.
+    # НАМЕРЕННО ":-" у GROQ_API_KEY_BROWSE, не ":?" — та же причина, что у
+    # collector-browse выше. Без ключа контейнер просто стартует и простаивает:
+    # celery_app.py не требует ключ на старте (только database_url/redis_url),
+    # он проверяется лениво внутри app.llm.call_llm() на первый реальный вызов.
+    environment:
+      <<: [*common-env, *db-env]
+      GROQ_API_KEY: ${GROQ_API_KEY_BROWSE:-}
+      GROQ_MODEL: ${GROQ_MODEL_BROWSE:-qwen/qwen3.8-27b}
+      CIRCUIT: browse
+    command: ["celery", "-A", "app.celery_app", "worker", "-Q", "llm_browse", "--concurrency=1", "--loglevel=info"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    # Только БД и брокер: воркер ставит задачу в очередь, но сам в LLM не ходит.
+    environment:
+      <<: [*common-env, *db-env]
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  llm-worker:
+    <<: *app
+    # Единственный сервис с ключом(-ами) LLM для main.
+    # concurrency=1 + rate_limit в celery_app: один процесс, который ходит в API.
+    # GROQ_API_KEY_MAIN_POOL_1/2/3 — запасные ключи для ротации при 429
+    # (см. app/llm.py:call_llm_with_pool). Необязательны: пустые пропускаются,
+    # settings.groq_key_pool деградирует до одного GROQ_API_KEY.
+    # llm-worker-browse эти переменные НЕ получает — пул только для main.
+    environment:
+      <<: [*common-env, *db-env]
+      GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY не задан}
+      GROQ_MODEL: ${GROQ_MODEL:?GROQ_MODEL не задан, см. .env.example}
+      GROQ_API_KEY_MAIN_POOL_1: ${GROQ_API_KEY_MAIN_POOL_1:-}
+      GROQ_API_KEY_MAIN_POOL_2: ${GROQ_API_KEY_MAIN_POOL_2:-}
+      GROQ_API_KEY_MAIN_POOL_3: ${GROQ_API_KEY_MAIN_POOL_3:-}
+    command: ["celery", "-A", "app.celery_app", "worker", "-Q", "llm", "--concurrency=1", "--loglevel=info"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  bot:
+    <<: *app
+    # Единственный сервис с токеном Telegram. Учётные данные фида и ключ LLM
+    # не нужны: /quota читает счётчики из Redis, а не ходит во внешний API.
+    environment:
+      <<: [*common-env, *db-env]
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN не задан}
+      TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:?TELEGRAM_OWNER_ID не задан}
+    command: ["python", "-m", "app.bot"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  beat:
+    <<: *app
+    # Отчёты и retention. Никаких внешних API — секретов сверх БД не нужно.
+    environment:
+      <<: [*common-env, *db-env]
+    # --schedule в /data: каталог с кодом непривилегированному пользователю
+    # недоступен на запись, а beat хранит расписание в файле.
+    command: ["celery", "-A", "app.celery_app", "worker", "-B", "-Q", "maintenance",
+              "--concurrency=1", "--loglevel=info", "--schedule=/data/celerybeat-schedule"]
+    volumes:
+      - beat_data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # pg_dump физически не может работать без учётных данных Postgres.
+    # Всё остальное сюда не отдаётся: ни учётные данные фида, ни ключ LLM,
+    # ни токен бота.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER не задан}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB не задан}
+      TZ: ${TZ:-UTC}
+    entrypoint: ["sh", "/scripts/backup.sh"]
+    volumes:
+      - ./scripts/backup.sh:/scripts/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+volumes:
+  pg_data:
+  redis_data:
+  beat_data:

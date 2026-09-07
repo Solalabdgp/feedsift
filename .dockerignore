@@ -1,0 +1,39 @@
+# Переменные окружения: .env содержит секреты (GROQ_API_KEY, пароль БД)
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.tox/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Разработка
+backups/
+*.log
+.env.example
+README.md
+ARCHITECTURE.md
