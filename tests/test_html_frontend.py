@@ -401,3 +401,22 @@ async def test_deeplink_bad_value_rejected(seeded) -> None:
     client, _ = seeded
     assert (await client.get("/", params={"lead": "abc"})).status_code == 422
     assert (await client.get("/", params={"lead": 0})).status_code == 422
+
+
+@requires_db
+async def test_suppressed_lead_not_in_html_list(seeded, hidden_ids) -> None:
+    client, _ = seeded
+    body = (await client.get("/api/leads", params={"limit": 200}, headers=HX)).text
+    for hidden in hidden_ids:
+        assert f'id="lead-row-{hidden}"' not in body
+
+
+@requires_db
+async def test_deeplink_to_suppressed_lead_is_ignored(seeded, hidden_ids) -> None:
+    """Ссылка вида /?lead={id} не должна быть обходом фильтра."""
+    client, _ = seeded
+    response = await client.get("/", params={"lead": hidden_ids[0]})
+
+    assert response.status_code == 200
+    assert 'x-data="{ open: true }"' not in response.text
+    assert f'id="lead-row-{hidden_ids[0]}"' not in response.text

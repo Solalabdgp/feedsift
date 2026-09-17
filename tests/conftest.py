@@ -148,7 +148,7 @@ async def seeded(db_engine, client):
     async with sessionmaker() as session:
         session.add(Source(name="alpha", category="job_board", circuit="main"))
         await session.flush()
-        for i in range(3):
+        for i in range(5):
             raw = RawItem(
                 source="alpha",
                 circuit="main",
@@ -173,13 +173,52 @@ async def seeded(db_engine, client):
                     headline=f"Лид {i}",
                     rules_version="v1",
                     llm_summary_ru=f"Пересказ {i}",
+                    # Дашборд показывает ТОЛЬКО долетевшее до Telegram. Первые
+                    # три — долетели, последние два нет: на них проверяется,
+                    # что отсеянное не течёт ни в список, ни в статистику,
+                    # ни в карточку по прямой ссылке.
+                    status="notified" if i < 3 else ("suppressed" if i == 3 else "new"),
                 )
             )
         await session.commit()
 
-        ids = list((await session.execute(select(Match.id).order_by(Match.id))).scalars().all())
+        ids = list(
+            (
+                await session.execute(
+                    select(Match.id).where(Match.status == "notified").order_by(Match.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     login = await client.post("/auth/login", json={"password": TEST_PASSWORD})
     assert login.status_code == 200, login.text
     yield client, ids
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def hidden_ids(seeded, db_engine) -> list[int]:
+    """id матчей, которые до Telegram не дошли (suppressed / new).
+
+    Зависит от seeded явно, а не только от db_engine: иначе порядок создания
+    фикстур определялся бы порядком аргументов в сигнатуре теста, и запрос
+    мог бы уйти в ещё пустую таблицу.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models import Match
+
+    sessionmaker = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        return list(
+            (
+                await session.execute(
+                    select(Match.id).where(Match.status != "notified").order_by(Match.id)
+                )
+            )
+            .scalars()
+            .all()
+        )

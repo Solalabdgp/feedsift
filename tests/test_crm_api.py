@@ -289,3 +289,58 @@ async def test_stats_group_earnings_by_currency(seeded) -> None:
         {"currency": "EUR", "amount": "200.00"},
         {"currency": "USD", "amount": "100.00"},
     ]
+
+
+# ------------------------------------------- фильтр по доставке в Telegram
+
+
+async def test_only_delivered_leads_are_listed(seeded, hidden_ids) -> None:
+    """В matches лежит весь поток пайплайна; дашборд — только то, что дошло.
+
+    На проде это 531 notified против 7244 suppressed: без фильтра в список
+    попадал весь поток.
+    """
+    client, ids = seeded
+    assert hidden_ids, "фикстура обязана завести не-notified матчи"
+
+    body = (await client.get("/api/leads", params={"limit": 200})).json()
+    listed = {item["id"] for item in body["items"]}
+
+    assert listed == set(ids)
+    assert body["total"] == len(ids)
+    assert listed.isdisjoint(hidden_ids)
+
+
+async def test_suppressed_lead_is_not_reachable_by_id(seeded, hidden_ids) -> None:
+    """Прямая ссылка на отсеянный лид — 404, а не показ его карточки."""
+    client, _ = seeded
+    for hidden in hidden_ids:
+        assert (await client.get(f"/api/leads/{hidden}")).status_code == 404
+
+
+async def test_suppressed_lead_cannot_be_mutated(seeded, hidden_ids) -> None:
+    """Иначе отсеянный лид правился бы через PATCH по угаданному id."""
+    client, _ = seeded
+    hidden = hidden_ids[0]
+
+    assert (
+        await client.patch(f"/api/leads/{hidden}/contact", json={"contact_state": "contacted"})
+    ).status_code == 404
+    assert (
+        await client.patch(
+            f"/api/leads/{hidden}/response",
+            json={"response_text": "x", "taken_in_work": True},
+        )
+    ).status_code == 404
+    assert (
+        await client.patch(f"/api/leads/{hidden}/earnings", json={"earnings": 1})
+    ).status_code == 404
+    assert (await client.delete(f"/api/leads/{hidden}")).status_code == 404
+
+
+async def test_stats_count_only_delivered(seeded, hidden_ids) -> None:
+    client, ids = seeded
+    stats = (await client.get("/api/stats")).json()
+
+    assert stats["total_leads"] == len(ids)
+    assert stats["not_contacted"] == len(ids)

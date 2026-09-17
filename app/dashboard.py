@@ -93,6 +93,19 @@ _STATE = func.coalesce(LeadCrm.contact_state, "not_contacted")
 # тогда удалённый лид не отфильтровался бы, а вернулся в список как «не написал».
 _VISIBLE = LeadCrm.deleted_at.is_(None)
 
+# В matches лежит ВЕСЬ поток, включая отсеянное фильтрами и LLM: на проде это
+# 7244 suppressed + 46 browse_suppressed + 1 new против 531 notified. Дашборд —
+# это CRM по лидам, которые реально дошли до владельца в Telegram, а не
+# смотровое окно в пайплайн: работать можно только с тем, что видел человек.
+# Без этого условия в списке оказывались все 7822 записи.
+#
+# Условие вынесено в одну константу и подмешивается в КАЖДУЮ выборку лида —
+# список, карточку, статистику, проверку существования при PATCH/DELETE.
+# Иначе suppressed-лид, недоступный в списке, открывался бы по прямой ссылке
+# вида /?lead={id} или правился бы через PATCH по угаданному id.
+DELIVERED_STATUS = "notified"
+_DELIVERED = Match.status == DELIVERED_STATUS
+
 _FILTERS: dict[str, ColumnElement[bool] | None] = {
     "all": None,
     "not_contacted": _STATE == "not_contacted",
@@ -347,7 +360,7 @@ async def _require_match(session: AsyncSession, lead_id: int) -> None:
     exists = await session.scalar(
         select(Match.id)
         .outerjoin(LeadCrm, LeadCrm.match_id == Match.id)
-        .where(Match.id == lead_id, _VISIBLE)
+        .where(Match.id == lead_id, _VISIBLE, _DELIVERED)
     )
     if exists is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Лид не найден")
@@ -408,7 +421,7 @@ def _list_query(conditions: list[ColumnElement[bool]]) -> Select:
 
 
 def _conditions(lead_filter: str) -> list[ColumnElement[bool]]:
-    conditions: list[ColumnElement[bool]] = [_VISIBLE]
+    conditions: list[ColumnElement[bool]] = [_VISIBLE, _DELIVERED]
     extra = _FILTERS[lead_filter]
     if extra is not None:
         conditions.append(extra)
@@ -436,7 +449,7 @@ async def _fetch_detail(session: AsyncSession, lead_id: int) -> LeadDetail:
             select(Match, RawItem, LeadCrm)
             .join(RawItem, RawItem.id == Match.raw_item_id)
             .outerjoin(LeadCrm, LeadCrm.match_id == Match.id)
-            .where(Match.id == lead_id, _VISIBLE)
+            .where(Match.id == lead_id, _VISIBLE, _DELIVERED)
         )
     ).first()
     if row is None:
@@ -495,12 +508,21 @@ async def _compute_stats(session: AsyncSession) -> StatsResponse:
             )
             .select_from(Match)
             .outerjoin(LeadCrm, LeadCrm.match_id == Match.id)
+            # Та же воронка, что и в списке: считаем только дошедшее до Telegram.
+            # Без этого total_leads показывал бы весь поток пайплайна (7822),
+            # а не то, с чем владелец реально работает (531).
+            .where(_DELIVERED)
         )
     ).one()
 
-    # Заработок считается ПО ВСЕМ строкам, включая мягко удалённые: убрать лид
-    # из рабочего списка — не то же самое, что отменить полученные по нему деньги
-    # (см. комментарий к deleted_at в миграции 0004).
+    # Заработок считается ПО ВСЕМ строкам lead_crm: и по мягко удалённым, и без
+    # оглядки на текущий matches.status. Убрать лид из рабочего списка — не то же
+    # самое, что отменить полученные по нему деньги (см. deleted_at в миграции 0004),
+    # и то же касается статуса: строка в lead_crm заводится только через дашборд,
+    # то есть по лиду, который на момент работы с ним был доставлен. Если пайплайн
+    # позже переведёт его в suppressed (так бывает: LLM пересматривает решение уже
+    # после отправки), лид уйдёт из воронки — но заработанные по нему деньги
+    # обязаны остаться в статистике, а не исчезнуть молча.
     earnings = (
         await session.execute(
             select(LeadCrm.currency, func.sum(LeadCrm.earnings))
@@ -548,7 +570,7 @@ def _detail_context(detail: LeadDetail) -> dict:
 
 
 async def _fetch_row_by_id(session: AsyncSession, lead_id: int) -> LeadListItem:
-    row = (await session.execute(_list_query([_VISIBLE, Match.id == lead_id]))).first()
+    row = (await session.execute(_list_query([_VISIBLE, _DELIVERED, Match.id == lead_id]))).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Лид не найден")
     return LeadListItem(**row._mapping)
@@ -743,7 +765,9 @@ async def delete_lead(request: Request, session: Db, lead_id: int = PathParam(ge
     не подходит: лид остался бы в matches и вернулся бы в список как «не
     написал», а история и заработок по нему исчезли бы из статистики.
     """
-    match_exists = await session.scalar(select(Match.id).where(Match.id == lead_id))
+    match_exists = await session.scalar(
+        select(Match.id).where(Match.id == lead_id, _DELIVERED)
+    )
     if match_exists is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Лид не найден")
 
