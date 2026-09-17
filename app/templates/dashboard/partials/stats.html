@@ -1,0 +1,69 @@
+{#
+  Виджеты статистики. Контракт: GET /api/stats ->
+    {total_leads, not_contacted, contacted, postponed, in_work, no_deal,
+     removed, earnings_total}
+
+  Рендерится дважды:
+  1) внутри index.html при первой загрузке страницы (обычный Jinja-рендер,
+     сервер сам вызывает то, что стоит за /api/stats, и прокидывает `stats`
+     в контекст шаблона)
+  2) как partial-обновление после любого quick-action в списке (написал/
+     отложил/удалил/сохранил заработок) — цифры должны обновляться сразу,
+     без перезагрузки страницы. Рекомендуемый паттерн: эндпоинты
+     /api/leads/{id}/contact, /response, /earnings, DELETE /api/leads/{id}
+     при HX-запросе возвращают ОСНОВНОЙ фрагмент (обновлённая строка лида)
+     + out-of-band блок с этим же partials/stats.html, обёрнутым в
+     <div id="stats-bar" hx-swap-oob="true">...</div> — тогда цифры наверху
+     обновляются "бесплатно" в том же ответе, без отдельного запроса.
+     id="stats-bar" уже проставлен в index.html на обёртке — переиспользуй его.
+
+  hooked-ux: earnings_total — главная метрика (Variable Reward), поэтому
+  всегда крупнее и заметнее остальных, не спрятана за скролл.
+
+  earnings_total — СПИСОК [{currency, amount}], а не число: сделки бывают
+  в разных валютах, а складывать их в одну сумму без курса нельзя (курс на
+  какую дату — на день сделки или на сегодня? — вопрос без бесплатного ответа).
+  Поэтому каждая валюта показывается своей строкой. Пустой список = ещё ничего
+  не заработано, показываем нулевой плейсхолдер, а не пустое место.
+#}
+<div class="stats-grid">
+  <div class="stat-tile stat-tile--hero">
+    <span class="stat-label">Заработано</span>
+    {% if stats.earnings_total %}
+      {% for row in stats.earnings_total %}
+        <span class="stat-value stat-value--hero">{{ "%.2f"|format(row.amount|float) }} {{ row.currency }}</span>
+      {% endfor %}
+    {% else %}
+      <span class="stat-value stat-value--hero">0.00 USD</span>
+    {% endif %}
+  </div>
+
+  <div class="stat-tile">
+    <span class="stat-label">Всего лидов</span>
+    <span class="stat-value">{{ stats.total_leads }}</span>
+  </div>
+  <div class="stat-tile">
+    <span class="stat-label">Не написал</span>
+    <span class="stat-value">{{ stats.not_contacted }}</span>
+  </div>
+  <div class="stat-tile">
+    <span class="stat-label">Написал</span>
+    <span class="stat-value">{{ stats.contacted }}</span>
+  </div>
+  <div class="stat-tile">
+    <span class="stat-label">Отложено</span>
+    <span class="stat-value">{{ stats.postponed }}</span>
+  </div>
+  <div class="stat-tile stat-tile--positive">
+    <span class="stat-label">В работе</span>
+    <span class="stat-value">{{ stats.in_work }}</span>
+  </div>
+  <div class="stat-tile stat-tile--muted">
+    <span class="stat-label">Отказ</span>
+    <span class="stat-value">{{ stats.no_deal }}</span>
+  </div>
+  <div class="stat-tile stat-tile--muted">
+    <span class="stat-label">Удалено</span>
+    <span class="stat-value">{{ stats.removed }}</span>
+  </div>
+</div>

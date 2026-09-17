@@ -1,0 +1,11 @@
+# Только для локального прогона тестов. В образ (Dockerfile) не попадает.
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest
+-r requirements.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
+# Redis в памяти. Сессии и счётчик блокировок гоняются через настоящий клиент
+# redis-py, а не через самописную заглушку: заглушка расходится с реальной
+# семантикой TTL/INCR ровно там, где на неё и рассчитывает код.
+fakeredis==2.38.0

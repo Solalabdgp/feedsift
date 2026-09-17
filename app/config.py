@@ -103,6 +103,45 @@ class Settings(BaseSettings):
     intent_score_cap: int = 8
     noise_penalty_cap: int = -8
 
+    # --- Dashboard (веб-CRM поверх matches, app/dashboard.py) ---
+    # Отдельный процесс uvicorn, к боту и воркерам отношения не имеет: ни один из них
+    # эти поля не читает. Пустые дефолты — та же логика, что у database_url выше:
+    # без пароля/пеппера/origin дашборд обязан не подняться, а не подняться открытым.
+    #
+    # Argon2id PHC-строка ($argon2id$v=19$m=...$...$...). Сгенерировать:
+    #   python -m app.auth.security
+    # Сам пароль нигде не хранится — ни в .env, ни в БД.
+    dashboard_password_hash: str = ""
+    # Пеппер — секрет приложения, НЕ часть хэша. Пароль перед Argon2 прогоняется через
+    # HMAC-SHA256 с ним, поэтому утёкший DASHBOARD_PASSWORD_HASH без пеппера
+    # не подбирается офлайн вообще. Побочный полезный эффект: на вход Argon2
+    # всегда приходит ровно 64 символа, длина присланного пароля на стоимость
+    # хэширования не влияет (нет DoS «пароль на мегабайт»).
+    dashboard_password_pepper: str = ""
+    # Скользящий TTL сессии в Redis, 12 часов.
+    dashboard_session_ttl_sec: int = 43200
+    # Жёсткий потолок жизни сессии: продлевать её бесконечно нельзя, иначе украденная
+    # кука живёт вечно, пока её касаются. 7 суток от момента логина.
+    dashboard_session_absolute_ttl_sec: int = 604800
+    # Единственный разрешённый Origin, например https://dash.example.com.
+    # Проверяется на всех POST/PUT/PATCH/DELETE (app/auth/origin_guard.py).
+    dashboard_origin: str = ""
+    # Ставить ли на куку флаг Secure. Выключать ТОЛЬКО для локальной отладки по http.
+    dashboard_cookie_secure: bool = True
+    # Неудачных попыток входа с одного IP до блокировки и длина окна их накопления.
+    dashboard_login_max_attempts: int = 5
+    dashboard_login_window_sec: int = 900
+    # Доверять ли X-Forwarded-For. True имеет смысл ТОЛЬКО когда перед сервисом
+    # стоит собственный реверс-прокси, который этот заголовок перезаписывает.
+    # При прямом доступе к порту это позволило бы обойти блокировку по IP
+    # подстановкой чужого адреса в заголовок.
+    dashboard_trust_proxy: bool = True
+    # 127.0.0.1 — намеренный дефолт: сервис не должен случайно оказаться открытым
+    # наружу. В compose нужно явно выставить DASHBOARD_HOST=0.0.0.0, чтобы контейнер
+    # был доступен соседям по внутренней сети.
+    dashboard_host: str = "127.0.0.1"
+    dashboard_port: int = 8080
+
     # --- General ---
     quiet_hours_start: str = "23:00"
     quiet_hours_end: str = "08:00"
@@ -132,6 +171,9 @@ _HINTS = {
     "groq_api_key": "GROQ_API_KEY",
     "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
     "telegram_owner_id": "TELEGRAM_OWNER_ID",
+    "dashboard_password_hash": "DASHBOARD_PASSWORD_HASH (сгенерировать: python -m app.auth.security)",
+    "dashboard_password_pepper": "DASHBOARD_PASSWORD_PEPPER",
+    "dashboard_origin": "DASHBOARD_ORIGIN",
 }
 
 

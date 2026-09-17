@@ -1,0 +1,94 @@
+{#
+  Верхняя, «шапочная» часть строки лида: заголовок, бейджи, быстрые действия.
+  Вынесена из lead_card.html отдельным партиалом не ради красоты, а потому что
+  это единственная часть строки, которая меняется после PATCH — и единственная,
+  которую можно безопасно обновить out-of-band.
+
+  Обновлять OOB всю строку (#lead-row-{id}) нельзя: внутри неё лежит слот
+  #detail-{id} с раскрытыми деталями и Alpine-состоянием open на обёртке.
+  Замена строки целиком схлопывает открытую панель и стирает форму прямо
+  под руками у того, кто только что нажал в ней «Сохранить». Здесь же
+  заменяется только шапка, слот с деталями и x-data остаются на месте.
+
+  oob=True — рендер для out-of-band обновления (см. app/dashboard.py).
+#}
+<div id="lead-row-main-{{ lead.id }}" class="lead-row-main"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {#
+    preloaded — карточка уже отдана с деталями внутри (переход по /?lead={id}).
+    Тогда hx-get не вешается вовсе: детали в DOM, и первый клик должен просто
+    свернуть панель. Оставить загрузку — значит на первом же клике сходить за
+    тем, что уже есть, и перерисовать панель, стерев то, что человек успел
+    в ней набрать.
+  #}
+  <button type="button"
+          class="lead-headline"
+          @click="open = !open"
+          {% if not preloaded %}
+          hx-get="/api/leads/{{ lead.id }}"
+          hx-trigger="click once"
+          hx-target="#detail-{{ lead.id }}"
+          hx-swap="innerHTML"
+          {% endif %}>
+    <span class="chevron" :class="{ 'chevron-open': open }" aria-hidden="true">&#9656;</span>
+    <span class="lead-headline-text">{{ lead.headline or "(без заголовка)" }}</span>
+  </button>
+
+  <span class="badge badge-score" title="Score">{{ lead.score }}</span>
+
+  <span class="badge badge-intent badge-intent--{{ lead.intent_tag }}">
+    {%- if lead.intent_tag == "hiring_intent" -%}найм
+    {%- elif lead.intent_tag == "pain_point" -%}боль
+    {%- elif lead.intent_tag == "both" -%}найм+боль
+    {%- else -%}?
+    {%- endif -%}
+  </span>
+
+  <span class="lead-source">r/{{ lead.source }}</span>
+  {# lead.created_at ожидается datetime-объектом (не строкой из JSON-сериализации). #}
+  <span class="lead-date">{{ lead.created_at.strftime("%d.%m %H:%M") if lead.created_at else "" }}</span>
+
+  <span class="badge badge-state badge-state--{{ lead.contact_state }}">
+    {%- if lead.contact_state == "not_contacted" -%}не написал
+    {%- elif lead.contact_state == "contacted" -%}написал
+    {%- elif lead.contact_state == "postponed" -%}отложено
+    {%- else -%}{{ lead.contact_state }}
+    {%- endif -%}
+  </span>
+
+  {% if lead.taken_in_work is true %}
+    <span class="badge badge-work badge-work--yes">в работе{% if lead.earnings %} · {{ lead.earnings }} {{ lead.currency }}{% endif %}</span>
+  {% elif lead.taken_in_work is false %}
+    <span class="badge badge-work badge-work--no">отказ</span>
+  {% endif %}
+
+  <div class="lead-actions">
+    {% if lead.contact_state != "contacted" %}
+      <button type="button" class="btn btn-xs btn-primary"
+              hx-patch="/api/leads/{{ lead.id }}/contact"
+              hx-vals='{"contact_state": "contacted"}'
+              hx-target="#lead-row-main-{{ lead.id }}"
+              hx-swap="outerHTML">
+        Написал
+      </button>
+      {% if lead.contact_state != "postponed" %}
+      <button type="button" class="btn btn-xs btn-ghost"
+              hx-patch="/api/leads/{{ lead.id }}/contact"
+              hx-vals='{"contact_state": "postponed"}'
+              hx-target="#lead-row-main-{{ lead.id }}"
+              hx-swap="outerHTML">
+        Отложить
+      </button>
+      {% endif %}
+    {% endif %}
+
+    <button type="button" class="btn btn-xs btn-icon btn-danger-ghost"
+            title="Удалить"
+            aria-label="Удалить лида"
+            hx-delete="/api/leads/{{ lead.id }}"
+            hx-confirm="Удалить лида безвозвратно?"
+            hx-target="#lead-row-{{ lead.id }}"
+            hx-swap="outerHTML swap:200ms">
+      &#128465;
+    </button>
+  </div>
+</div>

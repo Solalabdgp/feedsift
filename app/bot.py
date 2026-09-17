@@ -102,6 +102,20 @@ def _esc(value: str | None) -> str:
     return html.escape(value or "")
 
 
+def _dashboard_url(lead_id: int | None = None) -> str | None:
+    """Ссылка на дашборд. None — дашборд не настроен на этом инстансе.
+
+    DASHBOARD_ORIGIN пуст на любой установке, где веб-дашборд не поднят, а бот
+    работает и без него. Поэтому ссылка не строится «на всякий случай»: кнопка
+    с мёртвым URL хуже отсутствия кнопки, Telegram ещё и отказывается
+    отправлять сообщение с некорректным url, то есть лид не доехал бы вовсе.
+    """
+    origin = settings.dashboard_origin.rstrip("/")
+    if not origin:
+        return None
+    return f"{origin}/?lead={lead_id}" if lead_id is not None else origin
+
+
 def _card_keyboard(match_id: int, permalink: str | None) -> InlineKeyboardMarkup:
     rows = []
     if permalink:
@@ -114,6 +128,13 @@ def _card_keyboard(match_id: int, permalink: str | None) -> InlineKeyboardMarkup
         InlineKeyboardButton(text="Почему прислал", callback_data=f"why:{match_id}"),
         InlineKeyboardButton(text="Оригинал текста", callback_data=f"orig:{match_id}"),
     ])
+    # Отдельным рядом и последней: обычная URL-кнопка, а не WebApp. Сессия
+    # дашборда живёт в httponly-куке и во встроенном браузере Telegram работает
+    # как в обычном; WebApp потребовал бы отдельной проверки подписи initData
+    # ради того же самого экрана.
+    dashboard_url = _dashboard_url(match_id)
+    if dashboard_url:
+        rows.append([InlineKeyboardButton(text="Открыть в дашборде", url=dashboard_url)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -306,11 +327,28 @@ async def cmd_help(message: Message) -> None:
         "/weights [set &lt;key&gt; &lt;N&gt;] — веса правил\n"
         f"/threshold [N] — порог уведомления (сейчас {rules.notify_threshold})\n"
         "/quota — расход квоты LLM\n"
+        "/dashboard — открыть веб-CRM по лидам\n"
         "/pause /resume — пауза уведомлений\n"
         "/favorites — избранные\n"
         "/digest — прислать дайджест сейчас\n"
         "/dryrun N — прогнать последние N записей через текущие правила\n"
         "/why &lt;match_id&gt; — разбор баллов"
+    )
+
+
+@router.message(Command("dashboard"))
+@owner_only
+async def cmd_dashboard(message: Message) -> None:
+    """Ссылка на веб-дашборд одной кнопкой."""
+    url = _dashboard_url()
+    if url is None:
+        await message.answer("Дашборд не настроен: в .env не задан DASHBOARD_ORIGIN.")
+        return
+    await message.answer(
+        "CRM по лидам:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="Открыть дашборд лидов", url=url)]]
+        ),
     )
 
 

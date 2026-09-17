@@ -1,0 +1,71 @@
+{% extends "dashboard/base.html" %}
+{#
+  Дашборд/список лидов. Ожидаемый серверный контекст при обычном GET /:
+    stats          -> как в GET /api/stats
+    leads          -> первая страница, как в GET /api/leads?filter=all&limit=<page_size>&offset=0
+    active_filter  -> "all" (дефолт)
+    page_size      -> размер страницы (совпадает с limit, дефолт 30 ниже)
+
+  Табы фильтра (all/not_contacted/contacted/postponed/in_work/no_deal) и
+  пагинация "Показать ещё" не требуют отдельного HTML-роута — оба бьют в
+  тот же GET /api/leads?filter=&limit=&offset=, который для обычных
+  клиентов отдаёт JSON, а для HTMX-запроса (заголовок HX-Request: true)
+  должен отдавать HTML — содержимое partials/lead_list.html, включая саму
+  кнопку "Показать ещё" (см. комментарий там же — она часть list-партиала,
+  не отдельный блок здесь, иначе при смене таба кнопка не пересчиталась бы
+  под новый фильтр).
+
+  Активный таб — чисто клиентское состояние (Alpine, x-data на обёртке
+  #dashboard-main), переключается мгновенно по клику ДО ответа сервера —
+  ощущение отклика <250ms не завязано на сеть (emil-design-eng).
+#}
+
+{% block title %}Лиды — Lead Radar{% endblock %}
+
+{% block content %}
+<header class="topbar">
+  <h1 class="topbar-title">Lead Radar</h1>
+</header>
+
+<div id="stats-bar">
+  {% include "dashboard/partials/stats.html" %}
+</div>
+
+<section id="dashboard-main" x-data="{ activeFilter: '{{ active_filter or 'all' }}' }">
+  <nav class="filter-tabs" role="tablist">
+    {% for value, label in [
+        ("all", "Все"),
+        ("not_contacted", "Не написал"),
+        ("contacted", "Написал"),
+        ("postponed", "Отложено"),
+        ("in_work", "В работе"),
+        ("no_deal", "Отказ"),
+    ] %}
+      <button type="button"
+              role="tab"
+              class="tab"
+              :class="{ 'tab-active': activeFilter === '{{ value }}' }"
+              @click="activeFilter = '{{ value }}'"
+              hx-get="/api/leads"
+              hx-vals='{"filter": "{{ value }}", "limit": {{ page_size or 30 }}, "offset": 0}'
+              hx-target="#lead-list"
+              hx-swap="innerHTML"
+              hx-indicator="#list-loading">
+        {{ label }}
+      </button>
+    {% endfor %}
+    <span id="list-loading" class="htmx-indicator spinner" aria-hidden="true"></span>
+  </nav>
+
+  {#
+    limit/offset здесь — параметры ПЕРВОЙ страницы (offset=0, limit=page_size).
+    Кнопка "Показать ещё" внутри partials/lead_list.html сама считает
+    следующий offset от них при каждом рендере — см. комментарий там же.
+  #}
+  <div id="lead-list" class="lead-list">
+    {% with limit = page_size or 30, offset = 0 %}
+      {% include "dashboard/partials/lead_list.html" %}
+    {% endwith %}
+  </div>
+</section>
+{% endblock %}

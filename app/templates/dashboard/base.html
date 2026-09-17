@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+{#
+  Базовый layout CRM-дашборда. Внутренний инструмент для одного пользователя
+  (Вадим) — без брендинга, без маркетингового моушена (см. emil-design-eng:
+  переходы короткие <250ms ease-out, feedback на кнопках через :active).
+
+  Подключение статики/скриптов:
+  - app/dashboard.py монтирует StaticFiles(directory="app/static/dashboard") на /static,
+    то есть наружу отдаётся ТОЛЬКО статика дашборда. Пути ниже — простые абсолютные
+    /static/..., без url_for(), чтобы не завязываться на имя роута.
+  - Библиотеки лежат локально в vendor/, а не тянутся с CDN. Причина не в офлайне:
+    CSP дашборда (app/auth/security_headers.py) разрешает script-src 'self',
+    и запрос к jsdelivr браузер просто не выполнит — молча, без ошибки в сети.
+  - Alpine здесь — сборка @alpinejs/csp, а НЕ обычная. Обычная вычисляет выражения
+    из атрибутов через конструктор Function, что требует 'unsafe-eval' в CSP.
+    CSP-сборка этого не делает и поддерживает то подмножество синтаксиса, на котором
+    написаны здешние шаблоны: литералы объектов, сравнения, присваивание переменной.
+    Чего в ней НЕТ (не использовать в шаблонах): стрелочные функции, шаблонные
+    строки, spread, деструктуризация, обращение к window/document/console/Math/JSON,
+    присваивание в свойство (user.name = ...) и x-html.
+  - Alpine collapse-плагин ОБЯЗАН грузиться до ядра alpine (порядок ниже важен).
+  - Версии зафиксированы в имени файла: обновление = осознанная замена файла,
+    а не молчаливый подъезд новой версии под тем же URL.
+#}
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Lead Radar — CRM{% endblock %}</title>
+  {#
+    Две правки конфига htmx, обе — чтобы он не конфликтовал с CSP. Конфиг
+    читается из meta, без единой строчки JS, так что CSP не мешает и ему самому.
+
+    includeIndicatorStyles=false — htmx по умолчанию вставляет СВОЙ <style>
+    с правилами .htmx-indicator прямо в head, а инлайновый стиль запрещён нашей
+    CSP (style-src 'self'). Браузер его молча блокирует, и спиннеры, которые
+    должны быть спрятаны, висят на экране постоянно. Эти же правила уже есть
+    в dashboard.css (.htmx-indicator / .htmx-request), так что вставлять нечего.
+
+    attributesToSettle без "style" — на фазе settle htmx переносит перечисленные
+    атрибуты со старого элемента на новый через setAttribute. Для "style" это
+    ровно то, что CSP запрещает: атрибут style, в отличие от присваивания
+    el.style.foo из JS, считается инлайновым стилем и блокируется. Alpine свои
+    height/display ставит через CSSOM и в переносе не нуждается, а в шаблонах
+    атрибута style нет ни одного — переносить нечего, теряется только ошибка
+    в консоли на каждом свапе.
+  #}
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"attributesToSettle":["class","width","height"]}'>
+  {# Пустой data-URL вместо файла: гасит автоматический запрос /favicon.ico,
+     который иначе на каждой загрузке страницы отвечает 404. #}
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  {% block extra_head %}{% endblock %}
+
+  <script src="/static/vendor/alpine-collapse-3.17.3.min.js" defer></script>
+  <script src="/static/vendor/alpine-csp-3.17.3.min.js" defer></script>
+  <script src="/static/vendor/htmx-2.0.10.min.js"></script>
+</head>
+<body>
+  {% block body %}
+  <div class="page">
+    {% block content %}{% endblock %}
+  </div>
+  {% endblock %}
+
+  <div id="toast-root" aria-live="polite"></div>
+  <script src="/static/dashboard.js"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

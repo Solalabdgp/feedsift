@@ -11,3 +11,21 @@ structlog==24.4.0
 celery==5.4.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
+
+# --- Веб-дашборд (app/dashboard.py). Остальным сервисам не нужны. ---
+fastapi==0.141.1
+uvicorn==0.53.0
+# argon2-cffi — хэш пароля владельца. Argon2id, а не bcrypt: bcrypt молча режет
+# пароль на 72 байтах и не имеет настройки по памяти, то есть плохо
+# сопротивляется перебору на видеокартах.
+argon2-cffi==25.1.0
+# slowapi — дешёвый отсекатель шквала запросов на /auth/login ДО вызова Argon2.
+# Основная защита от перебора не здесь, а в app/auth/rate_limit.py (Redis).
+slowapi==0.1.10
+# jinja2 — серверный рендер страниц и HTML-фрагментов для htmx
+# (app/templates/dashboard/). Автоэкранирование включено: в шаблоны попадают
+# тексты чужих постов.
+jinja2==3.1.6
+# python-multipart — разбор тел форм. htmx кодирует всё, кроме GET,
+# в form-urlencoded, без этого пакета Starlette откажется читать request.form().
+python-multipart==0.0.32

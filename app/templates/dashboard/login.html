@@ -1,0 +1,41 @@
+{% extends "dashboard/base.html" %}
+{#
+  Логин: одна форма с паролем, без брендинга. Ожидаемый контракт:
+
+    POST /auth/login  body: {password: "..."}  (form-urlencoded ИЛИ JSON — форма
+    ниже шлёт обычный form-urlencoded через htmx, это стандартное поведение
+    hx-post для <form>; если бэкенду нужен JSON — форму легко переключить на
+    hx-ext="json-enc", но по умолчанию FastAPI Form(...) проще)
+
+    Успех: сервер ставит httpOnly cookie сессии и отвечает 200 с пустым телом
+    + заголовком `HX-Redirect: /` — htmx сам сделает переход, редиректить
+    вручную с фронта не нужно.
+
+    Провал (неверный пароль): сервер отвечает 200 (не 401 — иначе htmx по
+    умолчанию НЕ заменит #login-error, т.к. свапает только на 2xx) с HTML-
+    фрагментом текста ошибки в теле — он и попадёт в hx-target ниже.
+#}
+
+{% block title %}Вход — Lead Radar{% endblock %}
+
+{% block body %}
+<div class="login-screen">
+  <form class="login-card"
+        hx-post="/auth/login"
+        hx-target="#login-error"
+        hx-swap="innerHTML"
+        hx-indicator="#login-spinner">
+    <label class="field">
+      <span class="field-label">Пароль</span>
+      <input type="password" name="password" autocomplete="current-password" autofocus required>
+    </label>
+
+    <button type="submit" class="btn btn-primary btn-block">
+      Войти
+      <span id="login-spinner" class="htmx-indicator spinner" aria-hidden="true"></span>
+    </button>
+
+    <div id="login-error" class="form-error" role="alert"></div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,98 @@
+{#
+  Детали лида — грузится в #detail-{{ lead.id }} по GET /api/leads/{id}
+  (HTML-ветка для HTMX, JSON — для остального API). Ожидаемые поля сверх
+  lead_card: {text (полный пост), llm_summary_ru, url, response_text}.
+
+  Две независимые формы, оба PATCH таргетятся обратно в этот же
+  #detail-{{ lead.id }} (hx-swap="innerHTML"), чтобы после сохранения
+  показать актуальное состояние (и снова разметить блок суммы через
+  свежий lead.taken_in_work):
+
+    1) PATCH /api/leads/{id}/response  {response_text, taken_in_work}
+       taken_in_work приходит СТРОКОЙ radio-значения: "true" | "false" | "null"
+       -> бэкенду распарсить "null"/"" как None (третье состояние —
+       "пока не знаю", контракт явно допускает null).
+
+    2) PATCH /api/leads/{id}/earnings  {earnings, currency}
+       Показывается только когда taken_in_work == true — отдельная форма,
+       сабмитится отдельно, чтобы не гонять всё тело туда-сюда лишний раз.
+
+  Если после любого PATCH меняются агрегаты (earnings_total, in_work/
+  no_deal счётчики) и contact_state/бейджи в строке списка — верни вместе
+  с этим фрагментом OOB-обновления #lead-row-{{ lead.id }} и #stats-bar
+  (см. комментарии в lead_card.html / stats.html), иначе список и шапка
+  разъедутся с реальным состоянием до следующей перезагрузки.
+#}
+{#
+  takenInWork хранится СТРОКОЙ ('true' | 'false' | 'null'), в кавычках, а не
+  как JS-литерал. Это не стилистика: значения радио-кнопок ниже — строки, x-model
+  кладёт в модель именно строку, и блок суммы проверяет `takenInWork === 'true'`.
+  Если инициализировать модель булевым true, то сразу после сохранения ответа
+  (когда сервер прислал свежий фрагмент с lead.taken_in_work = True) сравнение
+  true === 'true' даёт false, и блок суммы не показывается у лида, который
+  только что взят в работу — при том, что кликом по той же радио-кнопке он
+  показывался. Строка убирает эту разницу между «отрисовано с сервера»
+  и «выбрано руками».
+#}
+<div class="lead-detail" x-data="{ takenInWork: '{{ (lead.taken_in_work | string | lower) if lead.taken_in_work is not none else 'null' }}' }">
+  <div class="lead-detail-post">
+    <p class="lead-detail-text">{{ lead.text }}</p>
+    {% if lead.llm_summary_ru %}
+      <p class="lead-detail-summary"><strong>Пересказ:</strong> {{ lead.llm_summary_ru }}</p>
+    {% endif %}
+    {% if lead.url %}
+      <a href="{{ lead.url }}" target="_blank" rel="noopener noreferrer" class="lead-detail-link">
+        Открыть оригинал &#8599;
+      </a>
+    {% endif %}
+  </div>
+
+  <form class="detail-form"
+        hx-patch="/api/leads/{{ lead.id }}/response"
+        hx-target="#detail-{{ lead.id }}"
+        hx-swap="innerHTML">
+    <label class="field">
+      <span class="field-label">Ответ клиента</span>
+      <textarea name="response_text" rows="3" placeholder="Суть ответа...">{{ lead.response_text or "" }}</textarea>
+    </label>
+
+    <fieldset class="segmented">
+      <legend class="field-label">Взято в работу</legend>
+      <label class="segmented-option">
+        <input type="radio" name="taken_in_work" value="true" x-model="takenInWork" {{ "checked" if lead.taken_in_work is true }}>
+        <span>Да</span>
+      </label>
+      <label class="segmented-option">
+        <input type="radio" name="taken_in_work" value="false" x-model="takenInWork" {{ "checked" if lead.taken_in_work is false }}>
+        <span>Нет</span>
+      </label>
+      <label class="segmented-option">
+        <input type="radio" name="taken_in_work" value="null" x-model="takenInWork" {{ "checked" if lead.taken_in_work is none }}>
+        <span>Пока не знаю</span>
+      </label>
+    </fieldset>
+
+    <button type="submit" class="btn btn-sm btn-primary">Сохранить ответ</button>
+  </form>
+
+  <div x-show="takenInWork === 'true'" x-collapse.duration.200ms x-cloak class="earnings-block">
+    <form class="detail-form detail-form--inline"
+          hx-patch="/api/leads/{{ lead.id }}/earnings"
+          hx-target="#detail-{{ lead.id }}"
+          hx-swap="innerHTML">
+      <label class="field field--inline">
+        <span class="field-label">Сумма</span>
+        <input type="number" name="earnings" step="0.01" min="0" value="{{ lead.earnings or '' }}">
+      </label>
+      <label class="field field--inline">
+        <span class="field-label">Валюта</span>
+        <select name="currency">
+          {% for cur in ["USD", "EUR", "RUB", "KZT"] %}
+            <option value="{{ cur }}" {{ "selected" if lead.currency == cur }}>{{ cur }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn btn-sm btn-primary">Сохранить сумму</button>
+    </form>
+  </div>
+</div>

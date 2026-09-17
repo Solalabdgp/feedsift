@@ -1,0 +1,45 @@
+{#
+  Список строк лидов + пагинация "Показать ещё". Переиспользуется:
+
+  1) index.html при первой отдаче страницы (обычный GET /, сервер сам
+     резолвит то, что стоит за /api/leads?filter=all&limit=<page_size>&offset=0)
+  2) htmx-ответом GET /api/leads?filter=...&limit=...&offset=0 при клике
+     по табам фильтра (index.html, hx-target="#lead-list" hx-swap="innerHTML")
+  3) htmx-ответом клика по кнопке "Показать ещё" ниже — паттерн htmx
+     "click to load": сама кнопка это hx-target (hx-swap="outerHTML"),
+     сервер в ОДНОМ ответе отдаёт [новые lead_card-строки] + [новая кнопка
+     со следующим offset, ИЛИ ничего, если лидов больше нет] — outerHTML-
+     свап на месте кнопки корректно вставляет несколько корневых
+     элементов подряд (это штатное поведение htmx, не хак).
+
+  Контекст, ожидаемый ВО ВСЕХ трёх случаях (бэкенд знает limit/offset,
+  т.к. сам их принял как query-параметры — считать их на клиенте через
+  DOM не нужно):
+    leads          -> список объектов как в GET /api/leads
+    active_filter  -> текущее значение filter (для hx-get кнопки)
+    limit          -> текущий limit (page size)
+    offset         -> offset ТЕКУЩЕГО запроса (для вычисления next_offset)
+
+  has_more/next_offset ниже считаются прямо в шаблоне (leads|length >= limit),
+  отдельно передавать их из бэкенда не обязательно.
+#}
+{% if leads %}
+  {% for lead in leads %}
+    {% include "dashboard/partials/lead_card.html" %}
+  {% endfor %}
+  {% if leads|length >= (limit or 30) %}
+    <button type="button" class="btn btn-ghost btn-block load-more"
+            hx-get="/api/leads"
+            hx-vals='{"filter": "{{ active_filter or 'all' }}", "limit": {{ limit or 30 }}, "offset": {{ (offset or 0) + (limit or 30) }}}'
+            hx-target="this"
+            hx-swap="outerHTML">
+      Показать ещё
+    </button>
+  {% endif %}
+{% elif (offset or 0) == 0 %}
+  {# Пусто с самого начала (первая загрузка / смена таба) — показываем сообщение. #}
+  <div class="empty-state">Лидов по этому фильтру нет.</div>
+{% endif %}
+{# Иначе (leads пуст, но offset > 0) — это ответ на клик "Показать ещё" и
+   лиды закончились: outerHTML-свап заменяет кнопку пустотой, кнопка просто
+   исчезает без обманчивого "лидов нет" под уже показанным списком. #}

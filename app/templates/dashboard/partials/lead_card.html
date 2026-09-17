@@ -1,0 +1,51 @@
+{#
+  Одна строка списка лидов. Ожидаемые поля `lead` — как в GET /api/leads:
+    {id, headline, score, intent_tag, source, created_at, contact_state,
+     taken_in_work, earnings, currency}
+
+  Сама строка это обёртка с Alpine-состоянием (open) плюс две части:
+    partials/lead_row_main.html — шапка: заголовок, бейджи, быстрые действия;
+    #detail-{id}                — слот, в который лениво подгружаются детали.
+
+  Быстрые действия (1 клик, без форм — приоритет из брифа) живут в шапке
+  и таргетятся в неё же (#lead-row-main-{id}, outerHTML):
+    "Написал"  -> PATCH /api/leads/{id}/contact  {contact_state: "contacted"}
+    "Отложить" -> PATCH /api/leads/{id}/contact  {contact_state: "postponed"}
+  Замена только шапки, а не всей строки, оставляет раскрытые детали открытыми.
+
+  "Удалить" -> DELETE /api/leads/{id} таргетится в строку ЦЕЛИКОМ: тут как раз
+  нужно убрать и детали. Бэкенд на htmx-запрос отвечает 200 с пустым телом
+  (не 204 — для htmx это «ничего не менять»), строка схлопывается (swap:200ms).
+
+  Раскрытие деталей: клик по заголовку лениво подгружает GET /api/leads/{id}
+  ОДИН раз (hx-trigger="click once") в #detail-{id}. Бэкенд отличает HTMX-запрос
+  (заголовок HX-Request: true) от обычного API-вызова и в первом случае отдаёт
+  HTML (partials/lead_detail.html), а не JSON.
+
+  Если действие меняет счётчики в шапке страницы — бэкенд возвращает вместе
+  с основным фрагментом out-of-band partials/stats.html
+  (<div id="stats-bar" hx-swap-oob="true">...</div>), см. partials/stats.html.
+#}
+{#
+  expand_lead_id / expand_detail приходят только с GET /?lead={id} — переход
+  из карточки в Telegram. Тогда ЭТА карточка отдаётся сразу раскрытой и сразу
+  с деталями внутри, без отдельного запроса после загрузки страницы: человек
+  пришёл по ссылке смотреть конкретный лид, и панель не должна моргать пустотой.
+  Во всех остальных рендерах (список, htmx-фрагменты) переменных нет — отсюда
+  `is defined`.
+#}
+{% set preloaded = expand_lead_id is defined and expand_lead_id == lead.id and expand_detail %}
+<div id="lead-row-{{ lead.id }}" class="lead-row" x-data="{ open: {{ 'true' if preloaded else 'false' }} }">
+  {% with preloaded = preloaded %}
+    {% include "dashboard/partials/lead_row_main.html" %}
+  {% endwith %}
+
+  <div id="detail-{{ lead.id }}" class="lead-detail-slot" x-show="open" x-collapse.duration.200ms x-cloak>
+    {% if preloaded %}
+      {% with lead = expand_detail %}
+        {% include "dashboard/partials/lead_detail.html" %}
+      {% endwith %}
+    {% endif %}
+    {# Иначе заполняется htmx-ем при первом клике по заголовку (см. выше). #}
+  </div>
+</div>

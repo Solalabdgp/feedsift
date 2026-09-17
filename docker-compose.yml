@@ -236,6 +236,29 @@ services:
       driver: json-file
       options: { max-size: "50m", max-file: "3" }
 
+  dashboard:
+    <<: *app
+    # CRM-слой над лидами: читает matches/raw_items, пишет в lead_crm.
+    # Единственный процесс, который слушает порт (внутри контейнера).
+    # Образ собирается из общего Dockerfile. Порт публикуется ТОЛЬКО на 127.0.0.1
+    # (localhost хоста), чтобы недоступен был напрямую из интернета в обход Caddy.
+    # Доступ исключительно через Caddy reverse proxy на хосте (systemd-сервис).
+    environment:
+      <<: [*common-env, *db-env]
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH:?DASHBOARD_PASSWORD_HASH не задан}
+      DASHBOARD_PASSWORD_PEPPER: ${DASHBOARD_PASSWORD_PEPPER:?DASHBOARD_PASSWORD_PEPPER не задан}
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:?DASHBOARD_ORIGIN не задан}
+      DASHBOARD_SESSION_TTL_SEC: ${DASHBOARD_SESSION_TTL_SEC:-43200}
+      DASHBOARD_COOKIE_SECURE: ${DASHBOARD_COOKIE_SECURE:-true}
+    command: ["uvicorn", "app.dashboard:app", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
 volumes:
   pg_data:
   redis_data:

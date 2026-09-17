@@ -2,18 +2,27 @@
 
 Источники (sources) -> сырые записи (raw_items) -> совпадения (matches),
 плюс LLM-поля в matches и таблица llm_usage_log.
+
+Поверх matches — CRM-слой веб-дашборда (lead_crm, 1:1), см. миграцию 0004.
+Match сознательно не знает о нём ничего: ни колонок, ни relationship.
 """
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     ARRAY,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Float,
     ForeignKey,
+    Index,
+    Numeric,
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -104,6 +113,81 @@ class Match(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
     raw_item: Mapped["RawItem"] = relationship(lazy="joined")
+
+
+class LeadCrm(Base):
+    """CRM-состояние лида для веб-дашборда. 1:1 к Match, строка заводится лениво.
+
+    Отсутствие строки = «не написал». Match.status сюда не участвует: это
+    технический статус доставки в Telegram, который пишет бот, а здесь —
+    воронка работы с клиентом. Match намеренно оставлен без relationship на
+    эту таблицу, чтобы запросы бота не менялись вообще.
+
+    Первое CRM-действие пишется upsert'ом по уникальному match_id:
+
+        INSERT INTO lead_crm (match_id, contact_state, contacted_at, updated_at)
+        VALUES (:match_id, 'contacted', now(), now())
+        ON CONFLICT (match_id) DO UPDATE
+           SET contact_state = excluded.contact_state,
+               contacted_at  = coalesce(lead_crm.contacted_at, excluded.contacted_at),
+               updated_at    = now();
+    """
+
+    __tablename__ = "lead_crm"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    match_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("matches.id", ondelete="CASCADE"), nullable=False
+    )
+    contact_state: Mapped[str] = mapped_column(Text, nullable=False, default="not_contacted")
+    # not_contacted (дефолт) | contacted (написал) | postponed (не написал, отложил)
+    reply_text: Mapped[str | None] = mapped_column(Text)  # суть ответа клиента
+    taken_in_work: Mapped[bool | None] = mapped_column(Boolean)  # NULL = ответа/решения ещё нет
+    earnings: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))  # только при taken_in_work
+    currency: Mapped[str] = mapped_column(Text, nullable=False, default="USD")  # ISO-4217
+    contacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    in_work_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # soft delete: скрыт из CRM-вида, но история и заработок остаются в статистике
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    match: Mapped["Match"] = relationship(lazy="joined")
+
+    __table_args__ = (
+        UniqueConstraint("match_id", name="uq_lead_crm_match"),
+        CheckConstraint(
+            "contact_state IN ('not_contacted', 'contacted', 'postponed')",
+            name="ck_lead_crm_contact_state",
+        ),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="ck_lead_crm_currency"),
+        CheckConstraint(
+            "earnings IS NULL OR earnings >= 0", name="ck_lead_crm_earnings_non_negative"
+        ),
+        CheckConstraint(
+            "earnings IS NULL OR taken_in_work IS TRUE", name="ck_lead_crm_earnings_requires_work"
+        ),
+        CheckConstraint(
+            "contact_state <> 'contacted' OR contacted_at IS NOT NULL",
+            name="ck_lead_crm_contacted_at",
+        ),
+        CheckConstraint(
+            "taken_in_work IS NOT TRUE OR in_work_at IS NOT NULL", name="ck_lead_crm_in_work_at"
+        ),
+        Index(
+            "ix_lead_crm_state",
+            "contact_state",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_lead_crm_updated", text("updated_at DESC")),
+    )
 
 
 class Feedback(Base):
