@@ -7,7 +7,7 @@
 Telegram-токена и до пайплайна, а падение веб-слоя останавливает приём лидов.
 
 Что здесь есть и чего нет:
-  * читает matches и raw_items — только на чтение, ни одного UPDATE;
+  * читает matches и raw_posts — только на чтение, ни одного UPDATE;
   * пишет исключительно в lead_crm (см. миграцию 0004);
   * Match.status не трогает вообще: это статус доставки в Telegram, его ведёт бот.
 
@@ -113,7 +113,7 @@ class LeadListItem(BaseModel):
     headline: str | None
     score: int
     intent_tag: str
-    source: str  # raw_items.source — имя источника, из которого пришла запись
+    source: str  # raw_posts.subreddit — источник, из которого пришла запись
     circuit: str
     created_at: datetime
     contact_state: str
@@ -151,7 +151,7 @@ class RawItemOut(BaseModel):
     id: int
     source: str
     author_handle: str | None
-    url: str | None  # raw_items.permalink
+    url: str | None  # raw_posts.permalink
     title: str
     text: str
     posted_at: datetime
@@ -363,7 +363,7 @@ async def _lock_crm(session: AsyncSession, lead_id: int) -> LeadCrm | None:
     выстраивает их в очередь.
 
     noload обязателен, а не оптимизация. У LeadCrm.match стоит lazy="joined",
-    поэтому голый select(LeadCrm) подтягивает LEFT JOIN на matches и raw_items,
+    поэтому голый select(LeadCrm) подтягивает LEFT JOIN на matches и raw_posts,
     а Postgres отказывается брать FOR UPDATE на nullable-стороне внешнего
     соединения — запрос падал бы целиком. Сама связь здесь и не нужна.
     """
@@ -454,7 +454,7 @@ async def _fetch_detail(session: AsyncSession, lead_id: int) -> LeadDetail:
         compensation=match.compensation,
         contact=match.contact,
         decided_by=match.decided_by,
-        # llm_summary_ru лежит на matches, а не на raw_items: это результат
+        # llm_summary_ru лежит на matches, а не на raw_posts: это результат
         # разбора записи, а не её часть.
         llm_summary_ru=match.llm_summary_ru,
         llm_prob=match.llm_prob,

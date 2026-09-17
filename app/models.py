@@ -1,10 +1,33 @@
 """Схема БД.
 
-Источники (sources) -> сырые записи (raw_items) -> совпадения (matches),
+Источники (subreddits) -> сырые записи (raw_posts) -> совпадения (matches),
 плюс LLM-поля в matches и таблица llm_usage_log.
 
 Поверх matches — CRM-слой веб-дашборда (lead_crm, 1:1), см. миграцию 0011.
 Match сознательно не знает о нём ничего: ни колонок, ни relationship.
+
+Имена в Python и имена в БД здесь РАЗНЫЕ, и это сделано намеренно
+-----------------------------------------------------------------
+Таблицы и колонки названы так, как они реально называются в базе
+(subreddits, raw_posts.subreddit, raw_posts.author_username,
+matches.raw_post_id, reddit_authors.username). Это сверено запросом
+к information_schema рабочей базы, а не выведено из кода.
+
+Атрибуты моделей при этом оставлены нейтральными (source, author_handle,
+item_id, tag, raw_item_id, handle) и привязаны к колонкам первым
+позиционным аргументом mapped_column("реальное_имя", ...). Две причины:
+
+  1. Остальной код — collector.py, worker.py, dedup.py, bot.py, dashboard.py —
+     обращается к АТРИБУТАМ, а не к колонкам. Переименование атрибутов
+     потребовало бы править все эти модули разом, включая те, что работают
+     в проде прямо сейчас. Привязка имени колонки не трогает ни строки
+     за пределами этого файла.
+  2. Словарь кода остаётся независимым от площадки: «источник» и «запись»,
+     а не «сабреддит» и «пост». Схема БД при этом описана честно.
+
+Добавляешь поле — сверяй имя колонки с РЕАЛЬНОЙ базой, а не с соседней
+строкой в этом файле и не с миграциями в alembic/versions: нумерация
+миграций здесь и в проде разошлась (в проде 0011).
 """
 from datetime import datetime
 from decimal import Decimal
@@ -34,7 +57,7 @@ class Base(DeclarativeBase):
 
 
 class Source(Base):
-    __tablename__ = "sources"
+    __tablename__ = "subreddits"
 
     name: Mapped[str] = mapped_column(Text, primary_key=True)  # имя источника как в URL фида
     category: Mapped[str] = mapped_column(Text, nullable=False, default="other")
@@ -50,17 +73,21 @@ class Source(Base):
 
 
 class RawItem(Base):
-    __tablename__ = "raw_items"
+    __tablename__ = "raw_posts"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    source: Mapped[str] = mapped_column(Text, ForeignKey("sources.name"), nullable=False)
+    # Колонка в БД — subreddit, FK на subreddits.name (raw_posts_subreddit_fkey).
+    source: Mapped[str] = mapped_column(
+        "subreddit", Text, ForeignKey("subreddits.name"), nullable=False
+    )
     # Денормализация Source.circuit на момент приёма записи — тот же паттерн,
     # что уже применён к source/tag/author_handle в этой модели (не join).
     circuit: Mapped[str] = mapped_column(Text, nullable=False, default="main")
-    item_id: Mapped[str] = mapped_column(Text, nullable=False)  # идентификатор записи из фида
-    author_handle: Mapped[str | None] = mapped_column(Text)
-    permalink: Mapped[str | None] = mapped_column(Text)
-    tag: Mapped[str | None] = mapped_column(Text)
+    # Колонка post_id — идентификатор записи у площадки.
+    item_id: Mapped[str] = mapped_column("post_id", Text, nullable=False)
+    author_handle: Mapped[str | None] = mapped_column("author_username", Text)
+    permalink: Mapped[str | None] = mapped_column(Text)  # имя колонки совпадает
+    tag: Mapped[str | None] = mapped_column("flair", Text)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     posted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)  # title + body
@@ -77,7 +104,10 @@ class Match(Base):
     __tablename__ = "matches"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    raw_item_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("raw_items.id"), nullable=False)
+    # Колонка в БД — raw_post_id (FK matches_raw_post_id_fkey -> raw_posts.id).
+    raw_item_id: Mapped[int] = mapped_column(
+        "raw_post_id", BigInteger, ForeignKey("raw_posts.id"), nullable=False
+    )
     # Денормализация от Source.circuit через RawItem — так /browse в боте фильтрует
     # matches без join. Индекс см. миграцию 0003 (ix_matches_circuit_status).
     circuit: Mapped[str] = mapped_column(Text, nullable=False, default="main")
@@ -221,9 +251,10 @@ class RuleWeight(Base):
 
 
 class Author(Base):
-    __tablename__ = "authors"
+    __tablename__ = "reddit_authors"
 
-    handle: Mapped[str] = mapped_column(Text, primary_key=True)
+    # Колонка в БД — username.
+    handle: Mapped[str] = mapped_column("username", Text, primary_key=True)
     good_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     bad_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)

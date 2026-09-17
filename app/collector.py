@@ -140,7 +140,11 @@ class SourceList:
             with self._engine.connect() as conn:
                 rows = conn.execute(
                     sql_text(
-                        "SELECT name FROM sources WHERE enabled IS TRUE AND circuit = :circuit "
+                        # Таблица называется subreddits — сверено по реальной базе.
+                        # Здесь сырой SQL, а не модель Source, поэтому имя таблицы
+                        # НЕ подхватывается из app/models.py автоматически: при
+                        # следующем переименовании править надо и здесь тоже.
+                        "SELECT name FROM subreddits WHERE enabled IS TRUE AND circuit = :circuit "
                         "ORDER BY name"
                     ),
                     {"circuit": self._circuit},
