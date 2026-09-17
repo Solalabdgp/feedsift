@@ -190,6 +190,7 @@ services:
       <<: [*common-env, *db-env]
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN не задан}
       TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:?TELEGRAM_OWNER_ID не задан}
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-}
     command: ["python", "-m", "app.bot"]
     depends_on:
       migrate:
