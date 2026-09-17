@@ -34,7 +34,17 @@
   показывался. Строка убирает эту разницу между «отрисовано с сервера»
   и «выбрано руками».
 #}
-<div class="lead-detail" x-data="{ takenInWork: '{{ (lead.taken_in_work | string | lower) if lead.taken_in_work is not none else 'null' }}' }">
+{#
+  Та же заливка по статусу, что и в шапке строки (lead_row_main.html,
+  .state-fill--* в dashboard.css) — считается независимо здесь же из
+  lead.contact_state/taken_in_work, чтобы развёрнутая карточка не
+  оставалась белой на фоне цветной шапки.
+#}
+{% set row_fill = 'contacted' if lead.contact_state == 'contacted' and lead.taken_in_work is none
+             else 'work' if lead.contact_state == 'contacted' and lead.taken_in_work is true
+             else 'refused' if lead.contact_state == 'contacted' and lead.taken_in_work is false
+             else '' %}
+<div class="lead-detail{{ ' state-fill--' ~ row_fill if row_fill }}" x-data="{ takenInWork: '{{ (lead.taken_in_work | string | lower) if lead.taken_in_work is not none else 'null' }}' }">
   <div class="lead-detail-post">
     <p class="lead-detail-text">{{ lead.text }}</p>
     {% if lead.llm_summary_ru %}

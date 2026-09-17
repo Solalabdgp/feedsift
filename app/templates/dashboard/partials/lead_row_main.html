@@ -12,7 +12,16 @@
 
   oob=True — рендер для out-of-band обновления (см. app/dashboard.py).
 #}
-<div id="lead-row-main-{{ lead.id }}" class="lead-row-main"{% if oob %} hx-swap-oob="true"{% endif %}>
+{#
+  Заливка всей шапки по статусу (не только бейджа) — .state-fill--*
+  в dashboard.css. not_contacted/postponed класса не получают, фон
+  остаётся дефолтным (см. комментарий у .state-fill в CSS).
+#}
+{% set row_fill = 'contacted' if lead.contact_state == 'contacted' and lead.taken_in_work is none
+             else 'work' if lead.contact_state == 'contacted' and lead.taken_in_work is true
+             else 'refused' if lead.contact_state == 'contacted' and lead.taken_in_work is false
+             else '' %}
+<div id="lead-row-main-{{ lead.id }}" class="lead-row-main{{ ' state-fill--' ~ row_fill if row_fill }}"{% if oob %} hx-swap-oob="true"{% endif %}>
   {#
     preloaded — карточка уже отдана с деталями внутри (переход по /?lead={id}).
     Тогда hx-get не вешается вовсе: детали в DOM, и первый клик должен просто

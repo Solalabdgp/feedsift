@@ -27,6 +27,18 @@
   --danger-bg: #fdeaea;
   --neutral-bg: #eceef1;
 
+  /* Заливка всей строки/детали лида по contact_state + taken_in_work
+     (см. .state-fill--* ниже). work/refused переиспользуют
+     positive-bg/danger-bg — единая семантика с бейджами, отдельный
+     алиас на случай если понадобится развести цвета в будущем. */
+  --row-fill-contacted: #e0ebfd;
+  --row-fill-work: var(--positive-bg);
+  --row-fill-refused: var(--danger-bg);
+  /* Приглушённый текст (--text-muted) на пастельной заливке в светлой
+     теме иначе падает ниже 4.5:1 — здесь чуть темнее специально для
+     контраста поверх заливки, тёмная тема уже проходит на дефолтном. */
+  --text-muted-on-fill: #4b5563;
+
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -56,6 +68,9 @@
     --danger: #ef4444;
     --danger-bg: #3a1414;
     --neutral-bg: #22252b;
+
+    --row-fill-contacted: #13233f;
+    --text-muted-on-fill: var(--text-muted);
   }
 }
 
@@ -203,6 +218,7 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  overflow: hidden; /* заливка внутри (.state-fill--*) не квадратная — обрезаем по скруглению строки */
   transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
 }
 
@@ -263,6 +279,23 @@ body {
   flex-shrink: 0;
 }
 
+/* --- Заливка строки/детали по статусу контакта ---
+   Вешается на .lead-row-main (lead_row_main.html) и .lead-detail
+   (lead_detail.html) — на оба независимо, т.к. каждый партиал
+   пересчитывает свой класс сам из lead.contact_state/taken_in_work,
+   без похода в бэкенд. not_contacted и postponed класса не получают —
+   остаются на дефолтном фоне строки (var(--surface)), как и раньше. */
+
+.state-fill--contacted,
+.state-fill--work,
+.state-fill--refused {
+  --text-muted: var(--text-muted-on-fill);
+}
+
+.state-fill--contacted { background: var(--row-fill-contacted); }
+.state-fill--work { background: var(--row-fill-work); }
+.state-fill--refused { background: var(--row-fill-refused); }
+
 /* --- Badges --- */
 
 .badge {
@@ -284,7 +317,7 @@ body {
 .badge-intent--unknown { background: var(--neutral-bg); color: var(--text-muted); }
 
 .badge-state--not_contacted { background: var(--neutral-bg); color: var(--text-muted); }
-.badge-state--contacted { background: #e0ebfd; color: var(--accent); }
+.badge-state--contacted { background: var(--row-fill-contacted); color: var(--accent); }
 .badge-state--postponed { background: var(--warning-bg); color: var(--warning); }
 
 .badge-work--yes { background: var(--positive-bg); color: var(--positive); }
