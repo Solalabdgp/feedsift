@@ -1,7 +1,7 @@
 """CRM-слой поверх matches: отдельная таблица lead_crm (1:1)
 
-Revision ID: 0004
-Revises: 0003
+Revision ID: 0011
+Revises: 0010
 Create Date: 2026-09-16
 
 Веб-дашборд ведёт воронку по тем же лидам, что уже лежат в matches, но его
@@ -48,8 +48,8 @@ ALTER TYPE (значение из enum в Postgres не удаляется во�
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0004"
-down_revision = "0003"
+revision = "0011"
+down_revision = "0010"
 branch_labels = None
 depends_on = None
 

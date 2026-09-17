@@ -3,7 +3,7 @@
 Источники (sources) -> сырые записи (raw_items) -> совпадения (matches),
 плюс LLM-поля в matches и таблица llm_usage_log.
 
-Поверх matches — CRM-слой веб-дашборда (lead_crm, 1:1), см. миграцию 0004.
+Поверх matches — CRM-слой веб-дашборда (lead_crm, 1:1), см. миграцию 0011.
 Match сознательно не знает о нём ничего: ни колонок, ни relationship.
 """
 from datetime import datetime
